@@ -1,0 +1,22 @@
+{
+  "name": "Family Dinner OS",
+  "short_name": "Dinner OS",
+  "description": "Popsicle stick meal planner for the family",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1612",
+  "theme_color": "#1a1612",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://fav.farm/🍽️",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://fav.farm/🍽️",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
