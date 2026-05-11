@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -9,7 +10,251 @@
   <meta name="theme-color" content="#1a1612" />
   <link rel="manifest" href="manifest.json" />
   <title>Family Dinner OS</title>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+```
+const firebaseConfig = {
+  apiKey: "AIzaSyDyPBOlLIy6avrM86JD1crlloQxWGTKmxs",
+  authDomain: "family-meal-os.firebaseapp.com",
+  projectId: "family-meal-os",
+  storageBucket: "family-meal-os.firebasestorage.app",
+  messagingSenderId: "1026534657599",
+  appId: "1:1026534657599:web:d39aa1a569c3babb21328a"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const mealsCol = collection(db, "meals");
+
+const CAT_COLORS = {
+  'Pasta':          { bg: '#c8553d', light: '#e8876f', text: '#fff3ee' },
+  'Taco / Mexican': { bg: '#f4a261', light: '#f7c08a', text: '#3d1f00' },
+  'Soup':           { bg: '#2a9d8f', light: '#52c4b5', text: '#e8fffe' },
+  'Fun + Fast':     { bg: '#e9c46a', light: '#f2d88a', text: '#3d2e00' },
+  'Slow Cooker':    { bg: '#264653', light: '#3d6b7a', text: '#d6eef2' },
+  'Sheet Pan':      { bg: '#6d6875', light: '#9b8fa3', text: '#f3eff5' },
+  'Blackstone':     { bg: '#2d2d2d', light: '#666666', text: '#f5f5f5' },
+};
+const CATEGORIES = Object.keys(CAT_COLORS);
+
+const SEED_MEALS = [
+  {name:'Chicken Parm',category:'Pasta'},{name:'Carbonara',category:'Pasta'},
+  {name:'Spaghetti',category:'Pasta'},{name:'Chicken Alfredo',category:'Pasta'},
+  {name:'Chicken Alfredo Bake',category:'Pasta'},{name:'Buttered Noodles',category:'Pasta'},
+  {name:'Ravioli',category:'Pasta'},{name:'Chicken Noodle Casserole',category:'Pasta'},
+  {name:'Bowtie Casserole',category:'Pasta'},{name:'CBR Pasta',category:'Pasta'},
+  {name:'Chicken Tetrazzini',category:'Pasta'},
+  {name:'Taco Pizza',category:'Taco / Mexican'},{name:'Tacos',category:'Taco / Mexican'},
+  {name:'Taco / Burrito Bowls',category:'Taco / Mexican'},{name:'Nachos',category:'Taco / Mexican'},
+  {name:'Chicken Enchiladas',category:'Taco / Mexican'},{name:'Crunchwraps',category:'Taco / Mexican'},
+  {name:'Stackers',category:'Taco / Mexican'},{name:'Puff Pastry Tacos',category:'Taco / Mexican'},
+  {name:'Wontons',category:'Taco / Mexican'},
+  {name:'Chicken Noodles',category:'Soup'},{name:'Chili',category:'Soup'},
+  {name:'Chicken Chili',category:'Soup'},
+  {name:'Smashburgers',category:'Fun + Fast'},{name:'Quesadillas',category:'Fun + Fast'},
+  {name:'Breakfast for Dinner',category:'Fun + Fast'},{name:'CFA Nuggs',category:'Fun + Fast'},
+  {name:'Grilled Cheese',category:'Fun + Fast'},
+  {name:'Pot Roast',category:'Slow Cooker'},{name:'Swedish Meatballs',category:'Slow Cooker'},
+  {name:'Fajitas',category:'Sheet Pan'},{name:'Sliders',category:'Sheet Pan'},
+  {name:'Meat + Potato + Veggie',category:'Sheet Pan'},
+  {name:'Smash Burgers',category:'Blackstone'},{name:'Breakfast',category:'Blackstone'},
+  {name:'Stir Fry',category:'Blackstone'},{name:'Fried Rice',category:'Blackstone'},
+  {name:'Chicken & Veggies',category:'Blackstone'},{name:'Hibachi',category:'Blackstone'},
+];
+
+let meals = [], selectedCat = 'All', drawn = null, animating = false;
+let showAdd = false, showReset = false, newName = '', newCat = CATEGORIES[0];
+let seeded = false;
+
+async function seedIfEmpty() {
+  const snap = await getDocs(mealsCol);
+  if (snap.empty && !seeded) {
+    seeded = true;
+    for (const m of SEED_MEALS) {
+      await addDoc(mealsCol, { ...m, used: false });
+    }
+  }
+}
+
+async function markUsed(meal) {
+  await updateDoc(doc(db, "meals", meal.id), { used: true });
+}
+async function unmarkUsed(id) {
+  await updateDoc(doc(db, "meals", id), { used: false });
+}
+async function removeMeal(id) {
+  await deleteDoc(doc(db, "meals", id));
+}
+async function addMeal() {
+  const inp = document.getElementById('new-name');
+  const cat = document.getElementById('new-cat');
+  if (inp) newName = inp.value;
+  if (cat) newCat = cat.value;
+  if (!newName.trim()) return;
+  await addDoc(mealsCol, { name: newName.trim(), category: newCat, used: false });
+  newName = ''; showAdd = false; render();
+}
+async function resetWeek() {
+  const snap = await getDocs(mealsCol);
+  for (const d of snap.docs) {
+    await updateDoc(d.ref, { used: false });
+  }
+  drawn = null; showReset = false; toast('New week started!');
+}
+
+// Realtime listener
+onSnapshot(query(mealsCol, orderBy("category"), orderBy("name")), (snap) => {
+  meals = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  if (drawn) drawn = meals.find(m => m.id === drawn.id) || null;
+  render();
+});
+
+function weekLabel() {
+  const now = new Date(), start = new Date(now);
+  start.setDate(now.getDate() - now.getDay());
+  return `Week of ${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+}
+function pool() {
+  return meals.filter(m => !m.used && (selectedCat === 'All' || m.category === selectedCat));
+}
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2200);
+}
+function draw() {
+  if (animating) return;
+  const p = pool(); if (!p.length) return;
+  animating = true; drawn = null; render();
+  setTimeout(() => {
+    drawn = p[Math.floor(Math.random() * p.length)];
+    animating = false; render();
+  }, 680);
+}
+
+function render() {
+  const appEl = document.getElementById('app');
+  const available = pool().length, usedCount = meals.filter(m => m.used).length;
+  const col = drawn ? CAT_COLORS[drawn.category] : null;
+  const grouped = {};
+  for (const cat of CATEGORIES) grouped[cat] = meals.filter(m => m.category === cat);
+
+  appEl.innerHTML = `
+    <div class="header">
+      <div class="header-eyebrow">Family Dinner OS</div>
+      <h1 class="header-title">What's for Dinner?</h1>
+      <div class="header-sub">${weekLabel()} · ${available} available · ${usedCount} used</div>
+    </div>
+
+    <div class="filters">
+      <button class="filter-btn ${selectedCat==='All'?'active-all':''}" onclick="window._selectCat('All')">All</button>
+      ${CATEGORIES.map(cat => {
+        const c = CAT_COLORS[cat], active = selectedCat === cat;
+        return `<button class="filter-btn" onclick="window._selectCat('${cat.replace(/'/g,"\\'")}')" style="border-color:${active?c.light:'#3a3020'};background:${active?c.bg:'transparent'};color:${active?c.text:'#7a6a4a'}">${cat}</button>`;
+      }).join('')}
+    </div>
+
+    <div class="draw-zone">
+      <div class="stick ${animating?'animating':''}" onclick="window._draw()" style="${drawn&&col?`background:${col.bg};border:2px solid ${col.light};box-shadow:0 8px 32px ${col.bg}55;`:''}">
+        ${animating ? `<div class="stick-emoji">🥢</div>` : ''}
+        ${!animating&&!drawn ? `
+          <div class="stick-emoji">🪄</div>
+          <div class="stick-hint">${available>0?'Tap to draw a meal':'No meals left — reset the week!'}</div>
+          ${selectedCat!=='All'?`<div class="stick-sub">Drawing from: ${selectedCat}</div>`:''}
+        ` : ''}
+        ${!animating&&drawn ? `
+          <div class="stick-category" style="color:${col.text}">${drawn.category}</div>
+          <div class="stick-name" style="color:${col.text}">${drawn.name}</div>
+          <div class="stick-sub" style="color:${col.text};opacity:0.55;margin-top:8px">Tap to draw again</div>
+        ` : ''}
+      </div>
+      ${drawn&&!animating ? `
+        <div class="actions">
+          <button class="btn-primary" style="background:${col.bg};color:${col.text}" onclick="window._confirmDraw()">✓ We're making this</button>
+          <button class="btn-secondary" onclick="window._skipDraw()">Skip</button>
+        </div>
+      ` : ''}
+    </div>
+
+    <div class="library">
+      <div class="library-header">
+        <div class="library-label">Meal Library</div>
+        <div class="library-actions">
+          <button class="btn-sm ${showAdd?'active':''}" onclick="window._toggleAdd()">+ Add Meal</button>
+          <button class="btn-sm btn-sm-dim" onclick="window._toggleReset()">↺ New Week</button>
+        </div>
+      </div>
+
+      ${showAdd ? `
+        <div class="add-form">
+          <input id="new-name" type="text" placeholder="Meal name..." value="${newName}" />
+          <select id="new-cat">
+            ${CATEGORIES.map(c=>`<option ${c===newCat?'selected':''}>${c}</option>`).join('')}
+          </select>
+          <button class="btn-primary" style="background:#c8553d;color:#fff3ee" onclick="window._addMeal()">Add</button>
+        </div>
+      ` : ''}
+
+      ${showReset ? `
+        <div class="confirm-box">
+          <p>Reset all meals as available for a new week?</p>
+          <div class="confirm-actions">
+            <button class="btn-primary" style="background:#c8553d;color:#fff3ee" onclick="window._resetWeek()">Yes, new week</button>
+            <button class="btn-secondary" onclick="window._toggleReset()">Cancel</button>
+          </div>
+        </div>
+      ` : ''}
+
+      ${CATEGORIES.map(cat => {
+        const c = CAT_COLORS[cat], list = grouped[cat]||[];
+        if (!list.length) return '';
+        const avail = list.filter(m=>!m.used).length;
+        return `
+          <div class="cat-group">
+            <div class="cat-label" style="color:${c.light}">${cat} (${avail}/${list.length})</div>
+            <div class="meal-chips">
+              ${list.map(m=>`
+                <div class="chip ${m.used?'used':''}" style="background:${m.used?'#1e1a12':c.bg+'33'};border:1px solid ${m.used?'#2a2416':c.bg+'88'}">
+                  <span class="chip-name ${m.used?'used':''}">${m.name}</span>
+                  ${m.used
+                    ? `<button class="chip-btn" style="color:#7a6a4a" onclick="window._unmark('${m.id}')">↩</button>`
+                    : `<button class="chip-btn" style="color:#5a4030" onclick="window._remove('${m.id}')">×</button>`
+                  }
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+
+  if (showAdd) {
+    const inp = document.getElementById('new-name');
+    if (inp) { inp.focus(); inp.value = newName; }
+  }
+}
+
+// Expose to global scope for inline onclick handlers
+window._draw        = draw;
+window._selectCat   = (cat) => { selectedCat = cat; drawn = null; render(); };
+window._toggleAdd   = () => { showAdd = !showAdd; render(); };
+window._toggleReset = () => { showReset = !showReset; render(); };
+window._skipDraw    = () => { drawn = null; render(); };
+window._confirmDraw = () => { if (drawn) { markUsed(drawn); drawn = null; } };
+window._addMeal     = addMeal;
+window._resetWeek   = resetWeek;
+window._unmark      = unmarkUsed;
+window._remove      = removeMeal;
+window._toast       = toast;
+
+// Boot
+seedIfEmpty();
+```
+
+  </script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -35,13 +280,12 @@
     .stick-name { font-size: clamp(20px, 5vw, 28px); font-weight: bold; line-height: 1.2; }
     .actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
     .btn-primary { padding: 10px 20px; border-radius: 10px; border: none; font-size: 14px; cursor: pointer; font-family: inherit; font-weight: bold; transition: opacity 0.2s; }
-    .btn-secondary { padding: 10px 20px; border-radius: 10px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; font-family: inherit; transition: opacity 0.2s; }
-    .btn-primary:active, .btn-secondary:active { opacity: 0.7; }
+    .btn-secondary { padding: 10px 20px; border-radius: 10px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; font-family: inherit; }
     .library { padding: 0 16px; max-width: 700px; margin: 0 auto; }
     .library-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
     .library-label { font-size: 11px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; }
     .library-actions { display: flex; gap: 8px; }
-    .btn-sm { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: #c8b888; font-size: 12px; cursor: pointer; font-family: inherit; transition: background 0.2s; }
+    .btn-sm { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: #c8b888; font-size: 12px; cursor: pointer; font-family: inherit; }
     .btn-sm.active { background: var(--border); }
     .btn-sm-dim { color: #8a6a4a; }
     .add-form { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -57,12 +301,12 @@
     .chip.used { opacity: 0.4; }
     .chip-name { font-size: 13px; }
     .chip-name.used { text-decoration: line-through; color: #5a5040; }
-    .chip-btn { background: none; border: none; cursor: pointer; font-size: 12px; padding: 0; line-height: 1; opacity: 0.6; }
+    .chip-btn { background: none; border: none; cursor: pointer; font-size: 12px; padding: 0; line-height: 1; opacity: 0.7; }
     .loading { display: flex; align-items: center; justify-content: center; min-height: 100vh; font-size: 14px; color: var(--muted); letter-spacing: 2px; }
     .toast { position: fixed; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); background: #3a3020; color: var(--text); padding: 10px 20px; border-radius: 20px; font-size: 13px; opacity: 0; transition: opacity 0.3s; pointer-events: none; white-space: nowrap; z-index: 100; }
     .toast.show { opacity: 1; }
     @keyframes shake {
-      0%, 100% { transform: translateX(0) rotate(0deg); }
+      0%,100% { transform: translateX(0) rotate(0deg); }
       15% { transform: translateX(-6px) rotate(-3deg); }
       30% { transform: translateX(6px) rotate(3deg); }
       45% { transform: translateX(-4px) rotate(-2deg); }
@@ -75,129 +319,7 @@
   </style>
 </head>
 <body>
-<div id="app"><div class="loading">Loading...</div></div>
-<div class="toast" id="toast"></div>
-<script>
-const SUPABASE_URL = 'https://vwvilxctivdxfjckyqui.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_tFdqIvC2rumavO32YhxUwA_btlxskMb';
-const { createClient } = supabase;
-const db = createClient(SUPABASE_URL, SUPABASE_KEY);
-
-const CAT_COLORS = {
-  'Pasta':          { bg: '#c8553d', light: '#e8876f', text: '#fff3ee' },
-  'Taco / Mexican': { bg: '#f4a261', light: '#f7c08a', text: '#3d1f00' },
-  'Soup':           { bg: '#2a9d8f', light: '#52c4b5', text: '#e8fffe' },
-  'Fun + Fast':     { bg: '#e9c46a', light: '#f2d88a', text: '#3d2e00' },
-  'Slow Cooker':    { bg: '#264653', light: '#3d6b7a', text: '#d6eef2' },
-  'Sheet Pan':      { bg: '#6d6875', light: '#9b8fa3', text: '#f3eff5' },
-};
-const CATEGORIES = Object.keys(CAT_COLORS);
-
-let meals = [], selectedCat = 'All', drawn = null, animating = false;
-let showAdd = false, showReset = false, newName = '', newCat = CATEGORIES[0];
-
-async function fetchMeals() {
-  const { data, error } = await db.from('meals').select('*').order('category').order('name');
-  if (!error) { meals = data; render(); }
-}
-async function markUsed(meal) { await db.from('meals').update({ used: true }).eq('id', meal.id); }
-async function unmarkUsed(id) { await db.from('meals').update({ used: false }).eq('id', id); }
-async function removeMeal(id) { await db.from('meals').delete().eq('id', id); }
-async function addMeal() {
-  if (!newName.trim()) return;
-  await db.from('meals').insert({ name: newName.trim(), category: newCat, used: false });
-  newName = ''; showAdd = false; render();
-}
-async function resetWeek() {
-  await db.from('meals').update({ used: false }).neq('id', '00000000-0000-0000-0000-000000000000');
-  drawn = null; showReset = false; toast('New week started!');
-}
-
-db.channel('meals-sync')
-  .on('postgres_changes', { event: '*', schema: 'public', table: 'meals' }, payload => {
-    if (payload.eventType === 'INSERT') meals = [...meals, payload.new];
-    else if (payload.eventType === 'UPDATE') {
-      meals = meals.map(m => m.id === payload.new.id ? payload.new : m);
-      if (drawn && drawn.id === payload.new.id) drawn = payload.new;
-    } else if (payload.eventType === 'DELETE') {
-      meals = meals.filter(m => m.id !== payload.old.id);
-      if (drawn && drawn.id === payload.old.id) drawn = null;
-    }
-    render();
-  }).subscribe();
-
-function weekLabel() {
-  const now = new Date(), start = new Date(now);
-  start.setDate(now.getDate() - now.getDay());
-  return `Week of ${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-}
-function pool() { return meals.filter(m => !m.used && (selectedCat === 'All' || m.category === selectedCat)); }
-function toast(msg) {
-  const el = document.getElementById('toast');
-  el.textContent = msg; el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 2200);
-}
-function draw() {
-  if (animating) return;
-  const p = pool(); if (!p.length) return;
-  animating = true; drawn = null; render();
-  setTimeout(() => { drawn = p[Math.floor(Math.random() * p.length)]; animating = false; render(); }, 680);
-}
-
-function render() {
-  const app = document.getElementById('app');
-  const available = pool().length, usedCount = meals.filter(m => m.used).length;
-  const col = drawn ? CAT_COLORS[drawn.category] : null;
-  const grouped = {};
-  for (const cat of CATEGORIES) grouped[cat] = meals.filter(m => m.category === cat);
-
-  app.innerHTML = `
-    <div class="header">
-      <div class="header-eyebrow">Family Dinner OS</div>
-      <h1 class="header-title">What's for Dinner?</h1>
-      <div class="header-sub">${weekLabel()} · ${available} available · ${usedCount} used</div>
-    </div>
-    <div class="filters">
-      <button class="filter-btn ${selectedCat === 'All' ? 'active-all' : ''}" onclick="selectCat('All')">All</button>
-      ${CATEGORIES.map(cat => { const c = CAT_COLORS[cat], active = selectedCat === cat;
-        return `<button class="filter-btn" onclick="selectCat('${cat}')" style="border-color:${active?c.light:'#3a3020'};background:${active?c.bg:'transparent'};color:${active?c.text:'#7a6a4a'}">${cat}</button>`;
-      }).join('')}
-    </div>
-    <div class="draw-zone">
-      <div class="stick ${animating?'animating':''}" onclick="draw()" style="${drawn&&col?`background:${col.bg};border:2px solid ${col.light};box-shadow:0 8px 32px ${col.bg}55;`:''}">
-        ${animating ? `<div class="stick-emoji">🥢</div>` : ''}
-        ${!animating&&!drawn ? `<div class="stick-emoji">🪄</div><div class="stick-hint">${available>0?'Tap to draw a meal':'No meals left — reset the week!'}</div>${selectedCat!=='All'?`<div class="stick-sub">Drawing from: ${selectedCat}</div>`:''}` : ''}
-        ${!animating&&drawn ? `<div class="stick-category" style="color:${col.text}">${drawn.category}</div><div class="stick-name" style="color:${col.text}">${drawn.name}</div><div class="stick-sub" style="color:${col.text};opacity:0.55;margin-top:8px">Tap to draw again</div>` : ''}
-      </div>
-      ${drawn&&!animating ? `<div class="actions"><button class="btn-primary" style="background:${col.bg};color:${col.text}" onclick="confirmDraw()">✓ We're making this</button><button class="btn-secondary" onclick="skipDraw()">Skip</button></div>` : ''}
-    </div>
-    <div class="library">
-      <div class="library-header">
-        <div class="library-label">Meal Library</div>
-        <div class="library-actions">
-          <button class="btn-sm ${showAdd?'active':''}" onclick="toggleAdd()">+ Add Meal</button>
-          <button class="btn-sm btn-sm-dim" onclick="toggleReset()">↺ New Week</button>
-        </div>
-      </div>
-      ${showAdd ? `<div class="add-form"><input id="new-name" type="text" placeholder="Meal name..." value="${newName}" oninput="newName=this.value" onkeydown="if(event.key==='Enter')addMeal()"/><select id="new-cat" onchange="newCat=this.value">${CATEGORIES.map(c=>`<option ${c===newCat?'selected':''}>${c}</option>`).join('')}</select><button class="btn-primary" style="background:#c8553d;color:#fff3ee" onclick="addMeal()">Add</button></div>` : ''}
-      ${showReset ? `<div class="confirm-box"><p>Reset all meals as available for a new week?</p><div class="confirm-actions"><button class="btn-primary" style="background:#c8553d;color:#fff3ee" onclick="resetWeek()">Yes, new week</button><button class="btn-secondary" onclick="toggleReset()">Cancel</button></div></div>` : ''}
-      ${CATEGORIES.map(cat => {
-        const c = CAT_COLORS[cat], list = grouped[cat]||[];
-        if (!list.length) return '';
-        const avail = list.filter(m=>!m.used).length;
-        return `<div class="cat-group"><div class="cat-label" style="color:${c.light}">${cat} (${avail}/${list.length})</div><div class="meal-chips">${list.map(m=>`<div class="chip ${m.used?'used':''}" style="background:${m.used?'#1e1a12':c.bg+'33'};border:1px solid ${m.used?'#2a2416':c.bg+'88'}"><span class="chip-name ${m.used?'used':''}">${m.name}</span>${m.used?`<button class="chip-btn" style="color:#7a6a4a" onclick="unmarkUsed('${m.id}')">↩</button>`:`<button class="chip-btn" style="color:#5a4030" onclick="removeMeal('${m.id}')">×</button>`}</div>`).join('')}</div></div>`;
-      }).join('')}
-    </div>`;
-  if (showAdd) { const inp = document.getElementById('new-name'); if (inp) { inp.focus(); inp.value = newName; } }
-}
-
-function selectCat(cat) { selectedCat = cat; drawn = null; render(); }
-function toggleAdd() { showAdd = !showAdd; render(); }
-function toggleReset() { showReset = !showReset; render(); }
-function skipDraw() { drawn = null; render(); }
-function confirmDraw() { if (drawn) { markUsed(drawn); drawn = null; } }
-
-fetchMeals();
-</script>
+  <div id="app"><div class="loading">Loading...</div></div>
+  <div class="toast" id="toast"></div>
 </body>
 </html>
